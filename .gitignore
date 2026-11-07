@@ -1,0 +1,19 @@
+# never commit credentials
+.token-*
+.env
+.env.*
+*.token
+
+# deps / build
+node_modules/
+dist/
+
+# reference clone of clockworklabs/scrabblebot (not part of our repo)
+upstream/
+
+.DS_Store
+
+# large local market dumps
+bot/data/market-*.json
+
+bot/data/replay.jsonl

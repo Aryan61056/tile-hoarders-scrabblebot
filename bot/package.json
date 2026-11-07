@@ -1,0 +1,25 @@
+{
+  "name": "scrabblebot-ours",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate": "echo 'bindings are copied from upstream/src/module_bindings; regenerate with spacetime generate --lang typescript --out-dir src/module_bindings --module-path ../upstream/spacetimedb'",
+    "start": "tsx src/index.ts",
+    "test": "node --import tsx --test src/strategy.test.ts",
+    "build": "tsc",
+    "live": "tsx src/main.ts",
+    "sim": "tsx sim/run.ts",
+    "tune": "tsx sim/tune.ts"
+  },
+  "dependencies": {
+    "spacetimedb": "^2.12.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/ws": "^8.5.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  }
+}
