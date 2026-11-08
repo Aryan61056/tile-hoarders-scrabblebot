@@ -55,6 +55,20 @@ function rttP90(): number {
   const s = [...rtts].sort((a, b) => a - b);
   return s[Math.floor(s.length * 0.9)]!;
 }
+// Local clock vs server clock. A skewed machine clock (seen: +30 s) makes every auction look already
+// closed. The smallest recent (local now - opensAt) is skew plus the best-case network delay, so it is
+// subtracted from lag and from the stale check. Only matters when the skew is large or negative.
+const lagSamples: number[] = [];
+function noteLag(rawLagMs: number) {
+  lagSamples.push(rawLagMs);
+  if (lagSamples.length > 30) lagSamples.shift();
+}
+function clockSkewMs(): number {
+  if (lagSamples.length === 0) return 0;
+  const m = Math.min(...lagSamples);
+  // trust small values as real latency; only correct beyond 1.5 s of apparent lag, or any negative value
+  return m > 1500 || m < 0 ? m : 0;
+}
 function tsMs(t: unknown): number {
   const o = t as { microsSinceUnixEpoch?: bigint; __timestamp_micros_since_unix_epoch__?: bigint };
   return Number(o.microsSinceUnixEpoch ?? o.__timestamp_micros_since_unix_epoch__ ?? 0n) / 1000;
@@ -168,11 +182,13 @@ function startLobbyLoop(c: DbConnection) {
 
 function onAuction(c: DbConnection, auctionId: bigint, matchId: bigint, letter: string, opensAt?: unknown, closesAt?: unknown) {
   if (myBotId === null) return;
-  const recvLag = opensAt ? Math.round(Date.now() - tsMs(opensAt)) : -1;
+  if (opensAt) noteLag(Date.now() - tsMs(opensAt));
+  const skew = clockSkewMs();
+  const recvLag = opensAt ? Math.round(Date.now() - skew - tsMs(opensAt)) : -1;
   const key = `${matchId}:${auctionId}`;
   if (bidDone.has(key)) return;
   // already closed (we are processing a backlog): a bid now is rejected and only queues behind useful calls
-  if (closesAt && Date.now() > tsMs(closesAt) - 100) {
+  if (closesAt && Date.now() - skew > tsMs(closesAt) - 100) {
     bidDone.add(key);
     staleSkipped++;
     return;
