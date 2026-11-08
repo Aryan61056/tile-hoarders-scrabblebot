@@ -118,7 +118,7 @@ async function body(job: { spec: { type: string; params?: object }; file: string
       const rival = !hasWinner ? 0 : rec.winner[r] === X ? rec.paid[r]! : rec.top[r]!;
       const unseen = new Int8Array(26);
       for (let c = 0; c < 26; c++) unseen[c] = BAGC[c]! - seen[c]! - start[c]!;
-      let bid = O.ourBid(p, dict, { letter, roundsLeft: total - r, balance, rack, unseen }, rng);
+      let bid = O.ourBid(p, dict, { letter, roundsLeft: total - r, balance, rack, unseen, round: r }, rng);
       bid = Math.min(Math.floor(bid), balance);
       if (bid > 0 && (bid > rival || (bid === rival && rng() < 0.5))) {
         const pay = Math.max(rival, Math.min(1, bid));

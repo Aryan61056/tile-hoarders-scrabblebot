@@ -189,6 +189,7 @@ function onAuction(c: DbConnection, auctionId: bigint, matchId: bigint, letter: 
     balance: Number(me.balance),
     rack,
     unseen: unseenFor(c, matchId, rack),
+    round: 68 - (m.bagTotal + 1), // 6-seat matches with 5 start tiles have 68 auctions
   };
   const amount = ourBid(PARAMS, dict, state, rng, BID_BUDGET_MS);
   const tSend = Date.now();

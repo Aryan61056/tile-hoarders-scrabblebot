@@ -17,3 +17,4 @@ upstream/
 bot/data/market-*.json
 
 bot/data/replay.jsonl
+# (the gzipped copy bot/data/replay.jsonl.gz IS committed)

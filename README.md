@@ -23,10 +23,9 @@ The bot is an external SpacetimeDB client (TypeScript): it bids for tiles, spell
 
 ```bash
 cd bot && npm install
-# token: create a team on the site, then either generate a token on /team, or from the CLI:
-#   spacetime call scrabblebot mint_credential_nonce ; spacetime sql scrabblebot 'SELECT code FROM my_nonces'
-BOT_NAME=<your bot> BOT_NONCE=<code> npm run live     # first run saves .token-<name> (git-ignored)
-BOT_NAME=<your bot> npm run live                      # later runs
+# The bot authenticates with a SpacetimeDB identity token saved in bot/.token-<name> (git-ignored, never committed).
+# Move it between machines privately (AirDrop/USB), or pass BOT_TOKEN=<token>. See HANDOFF.md.
+BOT_NAME=<your bot> npm run live                      # uses bot/.token-<name>
 BOT_NAME=<your bot> TOURNAMENT_ID=<id> npm run live   # also registers for a tournament
 ```
 
@@ -38,6 +37,7 @@ Evaluate a strategy on real recorded matches (needs `bot/data/replay.jsonl`, bui
 ```bash
 BOT_NAME=<your bot> npx tsx src/dump.ts            # writes data/market-dump.json (large, git-ignored)
 python3 tools/make_replay.py                       # writes data/replay.jsonl
+gunzip -k data/replay.jsonl.gz                     # prebuilt replay set is committed (4.6 MB gz)
 SIM_WORKERS=7 npx tsx sim/replay.ts '{"default":{}}' 500 5 all
 ```
 

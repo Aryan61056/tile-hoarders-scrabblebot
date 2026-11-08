@@ -95,7 +95,7 @@ export function makeOurBot(p: OurParams, name = "ours"): Strategy {
       return ourBid(
         p,
         v.dict,
-        { letter: v.letter, roundsLeft: v.roundsLeft, balance: v.balance, rack: v.rack, unseen: v.unseen },
+        { letter: v.letter, roundsLeft: v.roundsLeft, balance: v.balance, rack: v.rack, unseen: v.unseen, round: v.round },
         v.rng,
       );
     },

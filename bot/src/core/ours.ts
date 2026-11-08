@@ -18,6 +18,9 @@ export interface OurParams {
   rho0: number;
   starveBal: number; // below this many coins, cash shorter words to refill (0 = off)
   starveLen: number; // shortest word cashed when starved
+  earlyFloor: number; // early game: bid at least earlyFloor x going price on common letters (0 = off)
+  earlyRounds: number; // how many opening auctions the floor applies to
+  floorMaxPrice: number; // only letters whose going price is at most this get the floor
 }
 
 export const DEFAULT_OURS: OurParams = {
@@ -35,7 +38,13 @@ export const DEFAULT_OURS: OurParams = {
   rho0: 1.5,
   starveBal: 10,
   starveLen: 4,
+  earlyFloor: 0,
+  earlyRounds: 25,
+  floorMaxPrice: 15,
 };
+
+// Median price paid per letter in 17k real all-human matches (A..Z).
+export const GOING_PRICE = [11, 17, 18, 14, 11, 20, 13, 21, 10, 29, 24, 11, 17, 11, 10, 17, 27, 11, 12, 10, 10, 18, 19, 31, 21, 38];
 
 export interface BidState {
   letter: number; // 0..25
@@ -99,14 +108,19 @@ export function ourBid(
   // The last auction's tile can never be played: the match ends when it closes.
   if (s.roundsLeft <= 1) return 0;
   const marg = marginalValue(p, dict, s, rng, deadlineMs);
-  if (marg <= 0) return p.minBid > 0 ? Math.min(p.minBid, s.balance) : 0;
+  // Opening floor: leaders buy from the first auction (coins recycle through words), so never sit it out.
+  const floor =
+    p.earlyFloor > 0 && s.round !== undefined && s.round < p.earlyRounds && GOING_PRICE[s.letter]! <= p.floorMaxPrice
+      ? Math.round(p.earlyFloor * GOING_PRICE[s.letter]!)
+      : 0;
+  if (marg <= 0) return Math.min(Math.max(floor, p.minBid), s.balance);
   let k = p.kappa;
   if (p.beta !== 0) {
     const rho = s.balance / Math.max(1, s.roundsLeft);
     k *= Math.min(3, Math.max(0.5, Math.pow(rho / p.rho0, p.beta)));
   }
   if (s.roundsLeft <= p.lateSpend) k *= 1 + p.lateBoost;
-  return Math.min(Math.max(Math.round(marg * k), p.minBid), s.balance);
+  return Math.min(Math.max(Math.round(marg * k), p.minBid, floor), s.balance);
 }
 
 // Dictionary indices of the words to play now. `auctionsLeft` counts the open auction.
