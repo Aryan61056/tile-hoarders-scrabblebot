@@ -42,6 +42,23 @@ const bidDone = new Set<string>();
 const lastWordAttempt = new Map<string, number>();
 const dumpedAuction = new Set<string>();
 const finished = new Set<string>();
+let staleSkipped = 0;
+
+// Round-trip tracking for reducer calls (bid / word): used to dump words earlier when the server is slow.
+const rtts: number[] = [];
+function noteRtt(ms: number) {
+  rtts.push(ms);
+  if (rtts.length > 60) rtts.shift();
+}
+function rttP90(): number {
+  if (rtts.length < 5) return 0;
+  const s = [...rtts].sort((a, b) => a - b);
+  return s[Math.floor(s.length * 0.9)]!;
+}
+function tsMs(t: unknown): number {
+  const o = t as { microsSinceUnixEpoch?: bigint; __timestamp_micros_since_unix_epoch__?: bigint };
+  return Number(o.microsSinceUnixEpoch ?? o.__timestamp_micros_since_unix_epoch__ ?? 0n) / 1000;
+}
 
 function loadToken(): string | undefined {
   try {
@@ -105,30 +122,31 @@ function ensureMatchSubscription(c: DbConnection, matchId: bigint) {
     .onApplied(() => {
       // catch an auction that was already open when the subscription landed
       for (const a of c.db.auction.iter()) {
-        if (a.matchId === matchId && a.status.tag === "Open") onAuction(c, a.id, a.matchId, a.letter);
+        if (a.matchId === matchId && a.status.tag === "Open") onAuction(c, a.id, a.matchId, a.letter, a.opensAt, a.closesAt);
       }
     })
     .subscribe([
+      `SELECT * FROM match_state WHERE id = ${key}`,
       `SELECT * FROM auction WHERE match_id = ${key}`,
       `SELECT * FROM auction_result WHERE match_id = ${key}`,
       `SELECT * FROM word_play WHERE match_id = ${key}`,
     ]);
 }
 
-function refreshMatches(c: DbConnection) {
+let ready = false;
+
+// Only our most recent matches can still be running at startup; later matches arrive as live events.
+function subscribeRecentMatches(c: DbConnection) {
   if (myBotId === null) return;
-  for (const p of c.db.matchParticipant.iter()) {
-    if (p.botId !== myBotId) continue;
-    const m = c.db.matchState.id.find(p.matchId);
-    if (m?.status.tag === "Running") ensureMatchSubscription(c, p.matchId);
-  }
+  const mine: bigint[] = [];
+  for (const p of c.db.matchParticipant.iter()) if (p.botId === myBotId) mine.push(p.matchId);
+  mine.sort((x, y) => (x < y ? 1 : x > y ? -1 : 0));
+  for (const id of mine.slice(0, 2)) ensureMatchSubscription(c, id);
 }
 
 function inRunningMatch(c: DbConnection): boolean {
-  if (myBotId === null) return false;
-  for (const p of c.db.matchParticipant.iter()) {
-    if (p.botId !== myBotId) continue;
-    if (c.db.matchState.id.find(p.matchId)?.status.tag === "Running") return true;
+  for (const k of subscribedMatches) {
+    if (c.db.matchState.id.find(BigInt(k))?.status.tag === "Running") return true;
   }
   return false;
 }
@@ -143,15 +161,22 @@ function startLobbyLoop(c: DbConnection) {
     });
   };
   tick();
-  lobbyTimer = setInterval(tick, 4000);
+  lobbyTimer = setInterval(tick, 10000);
 }
 
 // ---------- decisions ----------
 
-function onAuction(c: DbConnection, auctionId: bigint, matchId: bigint, letter: string) {
+function onAuction(c: DbConnection, auctionId: bigint, matchId: bigint, letter: string, opensAt?: unknown, closesAt?: unknown) {
   if (myBotId === null) return;
+  const recvLag = opensAt ? Math.round(Date.now() - tsMs(opensAt)) : -1;
   const key = `${matchId}:${auctionId}`;
   if (bidDone.has(key)) return;
+  // already closed (we are processing a backlog): a bid now is rejected and only queues behind useful calls
+  if (closesAt && Date.now() > tsMs(closesAt) - 100) {
+    bidDone.add(key);
+    staleSkipped++;
+    return;
+  }
   const m = c.db.matchState.id.find(matchId);
   const me = myParticipant(c, matchId);
   if (!m || m.status.tag !== "Running" || !me) return;
@@ -166,11 +191,18 @@ function onAuction(c: DbConnection, auctionId: bigint, matchId: bigint, letter: 
     unseen: unseenFor(c, matchId, rack),
   };
   const amount = ourBid(PARAMS, dict, state, rng, BID_BUDGET_MS);
+  const tSend = Date.now();
   if (amount > 0) {
-    c.reducers.submitBid({ auctionId, amount: BigInt(amount) }).catch(warn(`bid ${amount} on ${letter}`));
+    c.reducers
+      .submitBid({ auctionId, amount: BigInt(amount) })
+      .then(() => noteRtt(Date.now() - tSend))
+      .catch((e) => {
+        noteRtt(Date.now() - tSend);
+        warn(`bid ${amount} on ${letter} (rtt ${Date.now() - tSend}ms, recv lag ${recvLag}ms)`)(e);
+      });
   }
   log(
-    `m${matchId} r${state.roundsLeft} '${letter}' bid ${amount} (bal ${state.balance}, ${Date.now() - t0}ms)`,
+    `m${matchId} r${state.roundsLeft} '${letter}' bid ${amount} (bal ${state.balance}, ${Date.now() - t0}ms, recvLag ${recvLag}ms, p90rtt ${rttP90()}ms, stale skipped ${staleSkipped})`,
   );
   playWords(c, matchId, `${matchId}:${auctionId}`);
 }
@@ -179,7 +211,10 @@ function playWords(c: DbConnection, matchId: bigint, tag: string) {
   const m = c.db.matchState.id.find(matchId);
   if (!m || m.status.tag !== "Running") return;
   const auctionsLeft = m.bagTotal + 1;
-  const dumping = auctionsLeft <= PARAMS.dumpAt;
+  // dump earlier when the server is slow: words sent in the last window can land after the match ends
+  const p90 = rttP90();
+  const extra = p90 < 500 ? 0 : p90 < 1300 ? 1 : 2;
+  const dumping = auctionsLeft <= PARAMS.dumpAt + extra;
   const now = Date.now();
   const k = String(matchId);
   if (dumping) {
@@ -191,11 +226,18 @@ function playWords(c: DbConnection, matchId: bigint, tag: string) {
   lastWordAttempt.set(k, now);
   const rack = myRack(c, matchId);
   const me = myParticipant(c, matchId);
-  const idxs = ourWords(PARAMS, dict, rack, auctionsLeft, me ? Number(me.balance) : Infinity);
+  const idxs = ourWords({ ...PARAMS, dumpAt: PARAMS.dumpAt + extra }, dict, rack, auctionsLeft, me ? Number(me.balance) : Infinity);
   for (const i of idxs) {
     const word = dict.words[i]!;
     log(`m${matchId} play ${word}${dumping ? " (dump)" : ""}`);
-    c.reducers.submitWord({ matchId, word }).catch(warn(`play ${word}`));
+    const tw = Date.now();
+    c.reducers
+      .submitWord({ matchId, word })
+      .then(() => noteRtt(Date.now() - tw))
+      .catch((e) => {
+        noteRtt(Date.now() - tw);
+        warn(`play ${word} (rtt ${Date.now() - tw}ms)`)(e);
+      });
   }
 }
 
@@ -207,6 +249,7 @@ function onMatchEnded(c: DbConnection, matchId: bigint) {
   const me = myParticipant(c, matchId);
   if (!me) return;
   finished.add(key);
+  subscribedMatches.delete(key); // done; keeps per-event loops short
   log(`m${matchId} ENDED score ${me.score} balance ${me.balance}`);
 }
 
@@ -225,20 +268,21 @@ function connect() {
       log(`connected as ${identity.toHexString().slice(0, 12)}…`);
 
       c.db.auction.onInsert((_ctx, a) => {
-        if (a.status.tag === "Open") onAuction(c, a.id, a.matchId, a.letter);
+        if (a.status.tag === "Open") onAuction(c, a.id, a.matchId, a.letter, a.opensAt, a.closesAt);
       });
       c.db.myRack.onInsert(() => {
-        for (const p of c.db.matchParticipant.iter()) {
-          if (p.botId === myBotId && c.db.matchState.id.find(p.matchId)?.status.tag === "Running")
-            playWords(c, p.matchId, `rack:${Date.now()}`);
+        for (const k of subscribedMatches) {
+          const id = BigInt(k);
+          if (c.db.matchState.id.find(id)?.status.tag === "Running") playWords(c, id, `rack:${Date.now()}`);
         }
       });
-      c.db.matchState.onInsert(() => refreshMatches(c));
       c.db.matchState.onUpdate((_ctx, old, neu) => {
-        refreshMatches(c);
         if (old.status.tag !== "Ended" && neu.status.tag === "Ended") onMatchEnded(c, neu.id);
       });
-      c.db.matchParticipant.onInsert(() => refreshMatches(c));
+      // a new participation row after startup = a new match that includes us
+      c.db.matchParticipant.onInsert((_ctx, p) => {
+        if (ready && p.botId === myBotId) ensureMatchSubscription(c, p.matchId);
+      });
 
       c.subscriptionBuilder()
         .onApplied(() => {
@@ -252,7 +296,8 @@ function connect() {
           // our own participation rows (hundreds), not everyone's history
           c.subscriptionBuilder()
             .onApplied(() => {
-              refreshMatches(c);
+              subscribeRecentMatches(c);
+              ready = true;
               startLobbyLoop(c);
               if (TOURNAMENT_ID) {
                 c.reducers
@@ -267,7 +312,6 @@ function connect() {
         })
         .subscribe([
           "SELECT * FROM bot_credential",
-          "SELECT * FROM match_state",
           "SELECT * FROM my_rack",
         ]);
     })
@@ -286,6 +330,7 @@ function scheduleReconnect() {
   if (lobbyTimer) clearInterval(lobbyTimer);
   lobbyTimer = null;
   myBotId = null;
+  ready = false;
   const d = reconnectDelay;
   reconnectDelay = Math.min(reconnectDelay * 2, 15000);
   log(`reconnecting in ${d}ms`);
