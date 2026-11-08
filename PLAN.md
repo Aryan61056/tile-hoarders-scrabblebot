@@ -149,3 +149,13 @@ unspent cash. Live validation against real bots is still required.
 Reading: the floor fixes tile count and the early drought (nowin<20 37% to 0-6%) but the score drops, more so for higher floors.
 Tile count is not the lever. A floor buys tiles the valuation did not want, at prices that do not convert to points
 (score per coin falls). Top bots probably pick which tiles to buy, not just how many. Do not retry a plain price floor.
+
+## Experiment log: kappa / word cashing (replay, n=600, SIM_WORKERS=2)
+
+Seed 5 base 76.3+-1.7 (tiles 10.3, endbal 36). Deltas vs base:
+playLen 6 -10.2 | playLen 8 -1.3 | starve 20/len5 -1.4 | starveRho .5 0 (never triggers) / 1 -0.1 | playReward 30 -3.9 |
+holdBal 25 +1.6 / 40 +1.7 / 60 +0.8 | kappaEarly 1.6 +1.1 / 2.0 +0.7 / 2.5(r30) -2.4 | pWinEarly .4 -0.2 / .08 0 |
+kappa 1.3 +0.9 / 1.6 +2.4 / 2.0 +1.6 | pWin .3 +0.1 / .1 -7.8 | kappa1.6+holdBal40 +4.3.
+Seed 11 base 76.8: kappa1.6 +2.7 | holdBal40 +3.1 | kappa1.4+hold40 +5.3 | kappa1.6+hold40 +5.0 | kappa1.8+hold40 +4.7 |
+kappa1.6+hold50 +4.3 | kappa1.6+hold40+playLen8 +2.2.
+New default-OFF params in ours.ts: kappaEarly, pWinEarly, rampRounds, playReward, holdBal, starveRho, starveCap.

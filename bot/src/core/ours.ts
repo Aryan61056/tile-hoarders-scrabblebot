@@ -21,6 +21,15 @@ export interface OurParams {
   earlyFloor: number; // early game: bid at least earlyFloor x going price on common letters (0 = off)
   earlyRounds: number; // how many opening auctions the floor applies to
   floorMaxPrice: number; // only letters whose going price is at most this get the floor
+  // Round-dependent valuation (0 = off). Linear ramp from the early value to the base value over `rampRounds` auctions.
+  kappaEarly: number; // kappa used at round 0 (ramps to `kappa` at round rampRounds)
+  pWinEarly: number; // pWin used at round 0 (ramps to `pWin`)
+  rampRounds: number;
+  // Word cashing (0 = off / legacy behaviour).
+  playReward: number; // also play immediately any word worth at least this many points
+  holdBal: number; // while balance is at least this, hold ALL words except the final dump; 0 = off
+  starveRho: number; // starve threshold = max(starveBal, starveRho x auctionsLeft), capped at starveCap
+  starveCap: number;
 }
 
 export const DEFAULT_OURS: OurParams = {
@@ -41,6 +50,13 @@ export const DEFAULT_OURS: OurParams = {
   earlyFloor: 0,
   earlyRounds: 25,
   floorMaxPrice: 15,
+  kappaEarly: 0,
+  pWinEarly: 0,
+  rampRounds: 40,
+  playReward: 0,
+  holdBal: 0,
+  starveRho: 0,
+  starveCap: 40,
 };
 
 // Median price paid per letter in 17k real all-human matches (A..Z).
@@ -79,7 +95,9 @@ export function marginalValue(
   rng: () => number,
   deadlineMs = Infinity,
 ): number {
-  const future = Math.max(0, Math.round(p.pWin * (s.roundsLeft - 1)));
+  let pw = p.pWin;
+  if (p.pWinEarly > 0 && s.round !== undefined && s.round < p.rampRounds) pw = p.pWinEarly + (p.pWin - p.pWinEarly) * (s.round / p.rampRounds);
+  const future = Math.max(0, Math.round(pw * (s.roundsLeft - 1)));
   const S = future === 0 ? 1 : p.samples;
   const t0 = Date.now();
   let diff = 0;
@@ -87,9 +105,13 @@ export function marginalValue(
   for (let i = 0; i < S; i++) {
     sampleFuture(s.unseen, future, rng, draw);
     for (let c = 0; c < 26; c++) rackA[c] = s.rack[c]! + draw[c]!;
+    rackA[s.letter]!++;
+    dict.beginScope(rackA); // one candidate list serves both plans (rack without / with the new tile)
+    rackA[s.letter]!--;
     const vA = planValue(dict, rackA, p.branch, p.depth);
     rackA[s.letter]!++;
     const vB = planValue(dict, rackA, p.branch, p.depth);
+    dict.endScope();
     diff += vB - vA;
     done++;
     if (Date.now() - t0 > deadlineMs) break;
@@ -115,6 +137,7 @@ export function ourBid(
       : 0;
   if (marg <= 0) return Math.min(Math.max(floor, p.minBid), s.balance);
   let k = p.kappa;
+  if (p.kappaEarly > 0 && s.round !== undefined && s.round < p.rampRounds) k = p.kappaEarly + (p.kappa - p.kappaEarly) * (s.round / p.rampRounds);
   if (p.beta !== 0) {
     const rho = s.balance / Math.max(1, s.roundsLeft);
     k *= Math.min(3, Math.max(0.5, Math.pow(rho / p.rho0, p.beta)));
@@ -134,14 +157,16 @@ export function ourWords(
 ): number[] {
   const seq = planWords(dict, rack, p.branch + 1, p.depth + 1);
   if (auctionsLeft <= p.dumpAt) return seq;
-  const out = seq.filter((i) => dict.lens[i]! >= p.playLen);
-  if (p.starveBal > 0 && balance < p.starveBal) {
+  const out = seq.filter((i) => dict.lens[i]! >= p.playLen || (p.playReward > 0 && dict.rewards[i]! >= p.playReward));
+  const thr = p.starveRho > 0 ? Math.max(p.starveBal, Math.min(p.starveCap, p.starveRho * auctionsLeft)) : p.starveBal;
+  if (p.holdBal > 0 && balance >= p.holdBal) return [];
+  if (thr > 0 && balance < thr) {
     const cash = seq
       .filter((i) => dict.lens[i]! >= p.starveLen && !out.includes(i))
       .sort((a, b) => dict.rewards[b]! - dict.rewards[a]!);
     let b = balance + out.reduce((t, i) => t + dict.rewards[i]!, 0);
     for (const i of cash) {
-      if (b >= p.starveBal * 1.6) break;
+      if (b >= thr * 1.6) break;
       out.push(i);
       b += dict.rewards[i]!;
     }
