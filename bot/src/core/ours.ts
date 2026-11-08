@@ -34,7 +34,7 @@ export interface OurParams {
 
 export const DEFAULT_OURS: OurParams = {
   kappa: 1.5, // replay seeds 5/11/17: +4.3/+5.0/+3.6 with holdBal 40 (base 1.15)
-  samples: 8,
+  samples: 64, // replay seeds 23/31: 8 -> 82.6/82.5, 32 -> 86.1/84.9, 64 -> 86.2 (seed 31); about 100 ms per bid live
   pWin: 0.2,
   branch: 3,
   depth: 1,
