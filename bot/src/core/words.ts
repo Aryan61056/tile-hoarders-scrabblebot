@@ -61,6 +61,41 @@ export class Dict {
     }
   }
 
+  // Speed-up: a plan search only ever removes tiles, so every word it can find is spellable from the
+  // starting rack. beginScope builds that (small) candidate list once; top() then scans only it.
+  // Results are identical to an unscoped scan (same reward-descending order).
+  private scope: Int32Array | null = null;
+  beginScope(rack: Int8Array): boolean {
+    if (this.scope) return false;
+    let rm = 0;
+    let total = 0;
+    for (let c = 0; c < 26; c++) {
+      if (rack[c]! > 0) {
+        rm |= 1 << c;
+        total += rack[c]!;
+      }
+    }
+    const list: number[] = [];
+    const counts = this.counts;
+    for (let i = 0; i < this.n; i++) {
+      if (this.lens[i]! > total || (this.masks[i]! & ~rm) !== 0) continue;
+      const o = i * 26;
+      let ok = true;
+      for (let c = 0; c < 26; c++) {
+        if (counts[o + c]! > rack[c]!) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) list.push(i);
+    }
+    this.scope = Int32Array.from(list);
+    return true;
+  }
+  endScope() {
+    this.scope = null;
+  }
+
   // Indices of up to k best-reward words spellable from rack (reward descending).
   top(rack: Int8Array, k: number, out: number[]): number {
     let rm = 0;
@@ -76,7 +111,10 @@ export class Dict {
     const counts = this.counts;
     const masks = this.masks;
     const lens = this.lens;
-    for (let i = 0; i < this.n; i++) {
+    const sc = this.scope;
+    const scn = sc ? sc.length : this.n;
+    for (let j = 0; j < scn; j++) {
+      const i = sc ? sc[j]! : j;
       if (lens[i]! > total || (masks[i]! & ~rm) !== 0) continue;
       const o = i * 26;
       let ok = true;
@@ -107,7 +145,7 @@ export class Dict {
 const scratch: number[] = [];
 
 // Total reward of a plan: greedy repeated best word.
-export function greedyValue(d: Dict, rack: Int8Array): number {
+function greedyValueRaw(d: Dict, rack: Int8Array): number {
   let total = 0;
   const used: number[] = [];
   for (;;) {
@@ -122,14 +160,14 @@ export function greedyValue(d: Dict, rack: Int8Array): number {
 }
 
 // Best partition value with `branch` alternatives tried for the first `depth` picks.
-export function planValue(d: Dict, rack: Int8Array, branch = 4, depth = 2): number {
-  if (depth <= 0) return greedyValue(d, rack);
+function planValueRaw(d: Dict, rack: Int8Array, branch = 4, depth = 2): number {
+  if (depth <= 0) return greedyValueRaw(d, rack);
   const cands: number[] = [];
   if (d.top(rack, branch, cands) === 0) return 0;
   let best = 0;
   for (const i of cands.slice()) {
     d.remove(rack, i);
-    const v = d.rewards[i]! + planValue(d, rack, branch, depth - 1);
+    const v = d.rewards[i]! + planValueRaw(d, rack, branch, depth - 1);
     d.restore(rack, i);
     if (v > best) best = v;
   }
@@ -137,14 +175,14 @@ export function planValue(d: Dict, rack: Int8Array, branch = 4, depth = 2): numb
 }
 
 // The words of the best plan found (for actually playing them).
-export function planWords(d: Dict, rack: Int8Array, branch = 4, depth = 2): number[] {
+function planWordsRaw(d: Dict, rack: Int8Array, branch = 4, depth = 2): number[] {
   const cands: number[] = [];
   if (d.top(rack, branch, cands) === 0) return [];
   let bestV = -1;
   let bestSeq: number[] = [];
   for (const i of cands.slice()) {
     d.remove(rack, i);
-    const rest = depth > 1 ? planWords(d, rack, branch, depth - 1) : greedySeq(d, rack);
+    const rest = depth > 1 ? planWordsRaw(d, rack, branch, depth - 1) : greedySeq(d, rack);
     d.restore(rack, i);
     let v = d.rewards[i]!;
     for (const j of rest) v += d.rewards[j]!;
@@ -154,6 +192,25 @@ export function planWords(d: Dict, rack: Int8Array, branch = 4, depth = 2): numb
     }
   }
   return bestSeq;
+}
+
+function scoped<T>(d: Dict, rack: Int8Array, f: () => T): T {
+  const mine = d.beginScope(rack);
+  try {
+    return f();
+  } finally {
+    if (mine) d.endScope();
+  }
+}
+
+export function greedyValue(d: Dict, rack: Int8Array): number {
+  return scoped(d, rack, () => greedyValueRaw(d, rack));
+}
+export function planValue(d: Dict, rack: Int8Array, branch = 4, depth = 2): number {
+  return scoped(d, rack, () => planValueRaw(d, rack, branch, depth));
+}
+export function planWords(d: Dict, rack: Int8Array, branch = 4, depth = 2): number[] {
+  return scoped(d, rack, () => planWordsRaw(d, rack, branch, depth));
 }
 
 function greedySeq(d: Dict, rack: Int8Array): number[] {
