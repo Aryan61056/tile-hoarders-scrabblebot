@@ -159,3 +159,9 @@ kappa 1.3 +0.9 / 1.6 +2.4 / 2.0 +1.6 | pWin .3 +0.1 / .1 -7.8 | kappa1.6+holdBal
 Seed 11 base 76.8: kappa1.6 +2.7 | holdBal40 +3.1 | kappa1.4+hold40 +5.3 | kappa1.6+hold40 +5.0 | kappa1.8+hold40 +4.7 |
 kappa1.6+hold50 +4.3 | kappa1.6+hold40+playLen8 +2.2.
 New default-OFF params in ours.ts: kappaEarly, pWinEarly, rampRounds, playReward, holdBal, starveRho, starveCap.
+
+### Deployed: kappa 1.5 + holdBal 40 (default)
+Seed 17 confirmation (n=600): base 78.7 +- 1.6 (place 3.43), kappa 1.5 + holdBal 40 82.3 +- 1.6 (place 3.17, last 13% to 10%),
+kappa 1.4 + holdBal 40 81.9 +- 1.7. Together with seeds 5 and 11 (+4.3, +5.0) this is +3.6 to +5 on three seeds.
+Pacing / floor variants (section 6 above and the spend-target branch) all lost; do not retry them.
+Note: with all 8 cores free a 600-match replay config takes about 75 s, so sweeps are cheap when the live bot is the only other load.

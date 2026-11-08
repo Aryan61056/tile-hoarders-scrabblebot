@@ -33,7 +33,7 @@ export interface OurParams {
 }
 
 export const DEFAULT_OURS: OurParams = {
-  kappa: 1.15,
+  kappa: 1.5, // replay seeds 5/11/17: +4.3/+5.0/+3.6 with holdBal 40 (base 1.15)
   samples: 8,
   pWin: 0.2,
   branch: 3,
@@ -54,7 +54,7 @@ export const DEFAULT_OURS: OurParams = {
   pWinEarly: 0,
   rampRounds: 40,
   playReward: 0,
-  holdBal: 0,
+  holdBal: 40,
   starveRho: 0,
   starveCap: 40,
 };
