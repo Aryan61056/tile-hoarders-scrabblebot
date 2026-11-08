@@ -134,3 +134,18 @@ unspent cash. Live validation against real bots is still required.
 - The final is 3 games of a 6-player match, so some luck remains. The edge is in consistently finishing top-2.
 - Token leak: never commit it, never paste it in a public place.
 - CPU stalls: the starter warns that a slow `chooseWord` blocks the bot. Keep per-event work under about 100 ms or use a worker thread.
+
+## 6. Experiment log (replay, seed 5, n=600, all cores minus one)
+
+### Opening bid floor (`earlyFloor`, `earlyRounds`): NEGATIVE, keep OFF
+| Config | Score | Place | Tiles | $/t | Endbal | nowin<20 |
+|---|---|---|---|---|---|---|
+| base | 76.3 +- 1.7 | 3.55 | 10.3 | 14.2 | 36 | 37% |
+| floor 1.0, 25 rounds | 74.9 +- 1.8 | 3.65 | 12.0 | 12.2 | 33 | 6% |
+| floor 1.2, 25 rounds | 66.1 +- 1.9 | 4.23 | 13.1 | 11.3 | 21 | 0% |
+| floor 1.0, 40 rounds | 72.8 +- 1.8 | 3.81 | 13.1 | 11.4 | 28 | 6% |
+| floor 1.4, 25 rounds | 59.2 +- 1.7 | 4.63 | 12.9 | 11.6 | 12 | 0% |
+
+Reading: the floor fixes tile count and the early drought (nowin<20 37% to 0-6%) but the score drops, more so for higher floors.
+Tile count is not the lever. A floor buys tiles the valuation did not want, at prices that do not convert to points
+(score per coin falls). Top bots probably pick which tiles to buy, not just how many. Do not retry a plain price floor.
